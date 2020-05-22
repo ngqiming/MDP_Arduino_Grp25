@@ -1,0 +1,934 @@
+//ee4669fa-a3da-4b53-8040-0a28539cab3e
+#include "PinChangeInt.h"
+#include "DualVNH5019MotorShield.h"
+
+#include "SharpIR.h"
+//#include "PID_v1.h"
+//#include <Arduino.h>
+//#include <math.h>
+
+
+DualVNH5019MotorShield md;
+
+//-------------------------------Sensor Defination ----------------------------------------
+
+char arguments;
+double result, temp_1, temp_2, temp;
+const int irCount = 6;
+boolean ctest = false;  
+int totalGrid = 560;//564,590, increase by 110 if ticks offset   //561
+int totalGridCount =0;
+//SharpIR S1(A2, 1080);
+
+SharpIR sharp[irCount] = {
+  SharpIR(A0, 1080),
+  SharpIR(A1, 1080),
+  SharpIR(A2, 1080),
+  SharpIR(A3, 1080),
+  SharpIR(A4, 1080),
+  SharpIR(A5, 20150)
+};
+
+
+//-------------------------------Motor Definition--------------------------------------------
+int m1Ticks = 0, m2Ticks = 0;
+
+//PID Parameters
+double set_rpm = 100;//80 //116
+double curError = 0.0;
+double errSum, lastErr;
+double kp = 10.20;     //6
+double ki = 0.00;   //0.012//0.10
+double kd = 0.25;     //0.00, 0.10
+
+double angular_kp = 3.12;
+double angular_ki = 0.01;
+double angular_kd = 1.07;
+
+
+double Adjust = 0;
+double avgTicks = 0;
+double angle = 0;
+double turnRightTicks, turnLeftTicks;
+double turnRightAngle = 90;
+
+unsigned long prev_ms = 0;
+//unsigned long interval = 0;
+double m1Speed = 0, m2Speed = 0;  //m1 = left, m2 = right
+
+
+unsigned long lastTime;
+double Output = 0;
+float rawSensor_read = 0;
+int count = 0;
+int startpt = 0;
+int RightCount90 = 0;
+int LeftCount90 = 0;
+double offset_right  = 0.49;
+double offset_front  = -0.35;
+boolean gridoffset = false;
+//----------------------------------------------Main--------------------------------------------------------------
+
+void setup() {
+  Serial.begin(115200);
+  //Serial.println("setup");
+  PCintPort::attachInterrupt(3, &compute_m1_ticks, CHANGE); //Attached to Pin 3
+  PCintPort::attachInterrupt(11, &compute_m2_ticks, CHANGE); //Attached to Pin 11
+  md.init();
+}
+
+void loop() {
+
+
+  /*------------Drain all the battery AWAY~~~~*/
+  delay(2000);
+  //md.setSpeeds(350,350);
+   /*------------Calibration test for start point~~~~*/ 
+  
+  /* if (startpt == 0) {
+
+    calibration_test();
+    goLeft_90();
+    calibration();
+    startpt = 1;
+  }
+   listenCommand(); */
+
+  
+  /*---------Calibration test------------*/
+  
+    /* for(int i =0; i<5; i++) {
+       //goStraight_onegrid();
+       //delay(100);
+       //goLeft_90();
+       //goRight_90();
+       //delay(100);
+    } */
+
+    //goStraight(100);
+    //goStraight();
+  /*---------Sensor test------------*/
+    /*while (1) {
+    arguments = Serial.read();
+    
+    switch (arguments) {
+      case '0': goStraight_onegrid();
+                getAllSensor();
+               
+    }
+  }*/
+
+  /*while(1){
+    arguments = Serial.read();
+    switch(arguments) {
+        case '1': getAllSensor();
+                  break;
+      }
+    }*/
+
+
+  //getAllSensor();
+  delay(100000000);
+}
+
+void listenCommand() {
+
+  if (Serial.available() > 0) {
+
+    String incomingtest = Serial.readStringUntil('\n');
+    char instrcZ = incomingtest.charAt(0);
+
+    // boolean startNow = false;
+    if (instrcZ == 'Z') {
+      getAllSensor();
+
+    }
+
+    else {
+      //incomingtest = Serial.read();
+      char instrucCode = incomingtest.charAt(12);
+      switch (instrucCode) {
+        case 'f': goStraight_onegrid(); //forward
+          // Serial.println("btoandriod");
+          /*count++;
+          if (count >= 3) {
+            calibration_test();
+            count = 0;
+          }*/
+          getAllSensor();
+          break;
+        case 'l': goLeft_90();   //left
+          //calibration_test();
+           getAllSensor();
+          break;
+        case 'r': goRight_90();  //right
+          //calibration_test();
+          getAllSensor();
+          break;
+        case 'c':
+          calibration_test();
+          getAllSensor();
+          //ctest == true; 
+          break;
+        case 'Z': 
+            getAllSensor();
+            break;
+        case '0': goStraight(100);
+                  getAllSensor();
+          break;
+        case '1': goStraight(10);
+                  getAllSensor();
+          break;
+        case '2': goStraight(20);
+                  getAllSensor();
+          break;
+        case '3': goStraight(30);
+                  getAllSensor();
+          break;
+        case '4':  goStraight(40);
+                   getAllSensor();      
+          break;
+        case '5':  goStraight(50);
+                   getAllSensor();
+          break;
+        case '6':  goStraight(60);
+                   getAllSensor();
+          break;
+        case '7':  goStraight(70);
+                   getAllSensor();
+          break;
+        case '8':  goStraight(80);
+                   getAllSensor();
+          break;
+        case '9':  goStraight(90);
+                   getAllSensor();
+          break;
+
+      }
+
+    }
+
+  }
+}
+
+void getAllSensor() {     
+  double rawSensor_read[6];
+  double result[6];
+  int processed_result[6];
+
+  result[0] = A0sensor_reading();
+  result[1] = A1sensor_reading();
+  result[2] = A2sensor_reading();
+  result[3] = A3sensor_reading();
+  result[4] = A4sensor_reading();
+  result[5] = A5sensor_reading();
+  //Serial.println(String(result[0])+ "," + String(result[1])+ ","+String(result[2])+ ","+String(result[3])+ ","+String(result[4])+ ","+String(result[5]) );
+
+  double secondA2read = A2sensor_reading();
+  while (abs(result[2] - secondA2read) > 1.5) {
+    result[2] = secondA2read;
+    secondA2read = A2sensor_reading();
+  }
+
+  double secondA0read = A0sensor_reading();
+  while (abs(result[0] - secondA0read) > 1.5) {
+    result[0] = secondA0read;
+    secondA0read = A0sensor_reading();
+  }
+  double secondA4read = A4sensor_reading();
+  while (abs(result[4] - secondA4read) > 1.5) {
+    result[4] = secondA4read;
+    secondA4read = A4sensor_reading();
+  }
+  for (int i = 0; i < 6; i++) {
+    processed_result[i] = processing(abs(result[i]));
+  }
+  //Serial.println(result[2]);
+ 
+
+  
+  //Send to algo team
+  Serial.println("pSDATA," + String(processed_result[0]) + "," + String(processed_result[1]) + "," + String(processed_result[2]) + "," + String(processed_result[3]) + "," + String(processed_result[4]) + "," + String(processed_result[5]));
+
+}
+
+void basicTesting() {
+  while (1) {
+    arguments = Serial.read();
+    switch (arguments) {
+      case '0': result = A0sensor_reading();
+        Serial.println(result);
+        break;
+      case '1': result = A1sensor_reading();
+        Serial.println(result);
+        break;
+      case '2': result = A2sensor_reading();
+        Serial.println(result);
+        break;
+      case '3': result = A3sensor_reading();
+        Serial.println(result);
+        break;
+      case '4': result = A4sensor_reading();
+        Serial.println(result);
+        break;
+      case '5': result = A5sensor_reading();
+        Serial.println(result);
+        break;
+      case '6': goStraight(10);
+        break;
+      case '7': goRight(90);
+        break;
+      case '8': goLeft(90);
+        break;
+    }
+  }
+}
+//------------------------------------------------Sensor-------------------------------------------------------
+
+
+void actualResult() {                                 // for testing sensor only
+  float result = Asensor_reading(1) - 2.1;
+  Serial.println("measured cm: " + String(result));
+}
+
+
+//returns median sensor reading
+float Asensor_reading(int sensor) {  //get all sensor reading
+  float result = sharp[sensor].distance();
+  
+  return result;
+}
+
+
+double A0sensor_reading() {          //get A0 sensor reading and return calibrated value
+  rawSensor_read = Asensor_reading(0);
+  //float result = - 0.0092 * pow(rawSensor_read,2) + 1.362 * rawSensor_read - 11.089; //original
+  float result = -0.0055 * pow(rawSensor_read, 2) + 1.0561 * rawSensor_read - 7.9693;
+  return result;
+}
+
+
+double A1sensor_reading() {          //get A1 sensor reading and return calibrated value
+  rawSensor_read = Asensor_reading(1);
+  float result = 0.0065 * pow(rawSensor_read, 2) + 0.7826 * rawSensor_read - 5.7914;
+  return result;
+}
+
+
+double A2sensor_reading() {         //get A2 sensor reading and return calibrated value
+  //float result = 0.7994 * Asensor_reading(2) - 3.3955; //previous eqn
+  rawSensor_read = Asensor_reading(2);
+  float result = 0.0006*pow(rawSensor_read,3) - 0.0409*pow(rawSensor_read,2)+ 1.678*rawSensor_read - 10.61;
+  //float result = -0.0065 * pow(rawSensor_read,2) + 1.1132 * rawSensor_read - 8.042;
+  return result;
+}
+
+double A3sensor_reading() {         // get A3 sensor reading and return calibrated value
+  rawSensor_read = Asensor_reading(3);
+  float result = 0.0053 * pow(rawSensor_read, 2) + 0.7849 * rawSensor_read - 5.374;
+  return result;
+}
+
+double A4sensor_reading() {         // get A4 sensor reading and return calibrated value
+  rawSensor_read = Asensor_reading(4);
+  //float result = 0.0112 * pow(rawSensor_read,2) + 0.1449 * rawSensor_read + 3.0021; //original
+  float result = 0.0003*pow(rawSensor_read,3)- 0.0185* pow(rawSensor_read,2)+ 1.1879 *rawSensor_read - 8.0366;
+  return result;
+}
+
+double A5sensor_reading() {         // get A5 sensor reading and return calibrated value
+  rawSensor_read = Asensor_reading(5);
+  //float result = 30.419 * log(rawSensor_read) - 94.077; //old eqn
+  float result = 0.0002 * pow(rawSensor_read,3) - 0.0322 * pow(rawSensor_read,2) + 2.4642 * rawSensor_read - 40.311;
+  return result;
+}
+
+
+
+//------------------------------------------------Motor----------------------------------------------------------
+//-------------Motor Interrupt----------------------------
+void compute_m1_ticks() {
+  m1Ticks++;
+}
+
+void compute_m2_ticks() {
+  m2Ticks++;
+}
+
+
+//-------------PID----------------------------
+
+void Adjustment() {
+  Adjust = 0;
+  curError = m2Ticks - m1Ticks;
+
+  unsigned long now = millis();
+  double timeChange = (double)(now - lastTime);
+
+  /*Compute all the working error variables*/
+
+  errSum += (curError * timeChange);
+
+  double dErr = (curError - lastErr) / timeChange;
+
+
+  /*Compute PID Output*/
+  Output = kp * curError + ki * errSum + kd * dErr;
+
+  /*Remember some variables for next time*/
+  lastErr = curError;
+  lastTime = now;
+
+}
+
+
+void Turn_adjustment() {
+  Adjust = 0;
+  curError = m2Ticks - m1Ticks;
+  unsigned long now = millis();
+  double timeChange = (double)(now - lastTime);
+  /*Compute all the working error variables*/
+  errSum += (curError * timeChange);
+  double dErr = (curError - lastErr) / timeChange;
+
+  /*Compute PID Output*/
+  Output = angular_kp * curError + angular_ki * errSum + angular_kd * dErr;
+
+  /*Remember some variables for next time*/
+  lastErr = curError;
+  lastTime = now;
+
+}
+
+
+//-------------------------------movement - Direction and speed --------------------------
+
+void moveForward(double m1Speed, double m2Speed) {
+  unsigned long current_ms = millis() ;
+
+  Adjustment();
+  m1Speed = m1Speed - Output;
+  m2Speed = m2Speed + Output;
+  md.setSpeeds(m1Speed, m2Speed);
+  prev_ms = current_ms;
+  avgTicks = (m1Ticks + m2Ticks) / 2;
+  //Serial.println("M1: "+ String(m1Speed)+" M2: "+String(m2Speed));
+
+
+}
+
+
+void moveBack(double m1Speed, double m2Speed) {
+  unsigned long current_ms = millis() ;
+
+  Adjustment();
+  m1Speed = m1Speed - Output;
+  m2Speed = m2Speed + Output;
+  md.setSpeeds(m1Speed, m2Speed);
+  prev_ms = current_ms;
+  avgTicks = (m1Ticks + m2Ticks) / 2;
+
+
+}
+
+void turnRight(double angle, double m1Speed, double m2Speed) {
+  double tick_needed = angle * (turnRightTicks / 90);
+  unsigned long current_ms = millis();
+
+  Turn_adjustment();
+  m1Speed = m1Speed - Output+16;
+  m2Speed = m2Speed + Output-11;
+  md.setSpeeds(m1Speed, -m2Speed);
+  prev_ms = current_ms;
+  avgTicks = (m1Ticks + m2Ticks) / 2;
+  //Serial.println("M1: "+ String(m1Speed)+" M2: "+String(m2Speed));
+
+}
+
+
+void turnLeft(double angle, double m1Speed, double m2Speed) {
+  double tick_needed = angle * (turnRightTicks / 90);
+  unsigned long current_ms = millis();
+
+  Turn_adjustment();
+  m1Speed = m1Speed - Output;
+  m2Speed = m2Speed + Output;
+  md.setSpeeds(-m1Speed, m2Speed);
+  prev_ms = current_ms;
+  avgTicks = (m1Ticks + m2Ticks) / 2;
+  //Serial.println("M1: "+ String(m1Speed)+" M2: "+String(m2Speed));
+
+}
+
+
+//-----------------------------------movement - distance --------------------------------
+
+void goStraight() {
+  reset_Ticks();
+  while (avgTicks <4800) {
+    moveForward(Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm) );
+    delay(5);
+  }
+
+  //slow to stop
+  for (double i = Rrpm_to_speed(set_rpm); i >= 0; i -= 30) {
+    md.setSpeeds(i, i);
+  }
+  md.setBrakes(400, 372);
+  delay(200);
+  
+
+}
+
+
+void goStraight(int dist) {
+  reset_Ticks();
+
+  double dist_tick = dist_to_ticks(dist);
+
+  while (avgTicks < dist_tick) {
+    moveForward(Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm) );
+    delay(5);
+  }
+
+  //slow to stop
+  for (double i = Rrpm_to_speed(set_rpm); i >= 0; i -= 30) {
+    md.setSpeeds(i, i);
+  }
+
+  md.setBrakes(400, 400);
+ delay(100);
+
+
+}
+
+
+void goStraight_onegrid() {
+  
+  reset_Ticks();
+  while (avgTicks < 565) {  //530, 580,563,totalGrid
+    moveForward(Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm) );
+    delay(5);
+  }
+
+  md.setBrakes(399, 372);//400//365    //373
+ delay(200); //50
+}
+
+
+void goStraight_1cm() {
+  reset_Ticks();
+  while (avgTicks < (10)) {
+    moveForward(Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm) );
+    delay(5);
+  }
+
+  for (double i = Rrpm_to_speed(set_rpm); i >= 0; i --) {
+    md.setSpeeds(i, i);
+  }
+  md.setBrakes(400, 400);
+ delay(100);
+
+
+}
+
+void goBack_1cm() {
+  reset_Ticks();
+  while (avgTicks < (10)) {
+    moveBack(-Lrpm_to_speed(set_rpm), -Rrpm_to_speed(set_rpm) );
+    delay(5);
+  }
+
+  for (double i = Rrpm_to_speed(set_rpm); i >= 0; i --) {
+    md.setSpeeds(i, i);
+  }
+  md.setBrakes(400, 400);
+ delay(100);
+
+
+}
+
+
+void goRight_90() {
+  reset_Ticks();
+  
+  //int maxRightTicks = 840 + RightCount90 * 20;  
+  //turnRightTicks = angle_to_ticks(turnRightAngle);
+  while (avgTicks < 823) {  //818
+    turnRight(90, Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm));
+    delay(5);
+  }
+
+
+  md.setBrakes(400, 370);
+ delay(200);//200
+
+}
+
+void goRight_1() {
+  reset_Ticks();
+  //turnRightTicks = angle_to_ticks(turnRightAngle);
+  while (avgTicks < 4) {
+    turnRight(90, Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm));
+    delay(5);
+  }
+
+  md.setBrakes(400, 400);
+ delay(150);
+
+
+}
+
+void goRight(double turnRightAngle) {
+  reset_Ticks();
+  turnRightTicks = angle_to_ticks(turnRightAngle);
+  while (avgTicks < turnRightTicks) {
+    turnRight(90, Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm));
+    delay(5);
+  }
+
+  md.setBrakes(400, 400);
+  delay(50);
+
+
+}
+
+void goLeft_90() {
+  reset_Ticks();
+  //turnRightTicks = angle_to_ticks(turnRightAngle);
+  //int LeftTicks = 835 + LeftCount90 * 30; 
+  while (avgTicks < 823) {  //819 //827
+    turnLeft(90, Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm));
+    delay(5);
+  }
+
+  
+
+  md.setBrakes(400, 400);
+ delay(200);//200
+
+}
+
+
+void goLeft_1() {
+  reset_Ticks();
+  //turnRightTicks = angle_to_ticks(turnRightAngle);
+  while (avgTicks < 5) {
+    turnLeft(90, Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm));
+    delay(5);
+  }
+
+ md.setBrakes(400, 400);
+ delay(150);
+
+}
+
+void goLeft(double turnLeftAngle) {
+  reset_Ticks();
+
+  turnLeftTicks = angle_to_ticks(turnLeftAngle);
+  while (avgTicks < turnLeftTicks) {
+    turnLeft(90, Lrpm_to_speed(set_rpm), Rrpm_to_speed(set_rpm));
+    delay(5);
+  }
+
+  md.setBrakes(400, 400);
+  delay(100);
+
+}
+
+
+void avoidAccident_slow() {
+
+  goRight(90);
+  goStraight(20);
+
+  goLeft(90);
+  goStraight(40);
+
+
+  goLeft(90);
+  goStraight(20);
+
+  goRight(90);
+
+
+}
+
+void avoidAccident() {
+  double A2_reading = A2sensor_reading();
+  double A3_reading = A3sensor_reading();
+
+  while ( A2_reading > 40 ) {
+    goStraight(30);
+    A2_reading = A2sensor_reading();
+
+  }
+
+  if (A2_reading <= 40) {
+    goStraight(A2_reading - 12);
+  }
+
+
+  goRight(89);
+  goStraight(20);
+
+  goLeft(89);
+  goStraight(50);
+
+  goLeft(89);
+  goStraight(20);
+
+  goRight(90);
+
+
+  A2_reading = A2sensor_reading();
+  A3_reading = A3sensor_reading();
+
+  //Serial.println(A2_reading + A3_reading);
+  while ((A2_reading + A3_reading) > 40) {
+    goStraight(30);
+    A2_reading = A2sensor_reading();
+    A3_reading = A3sensor_reading();
+  }
+  if ((A2_reading + A3_reading) <= 30) {
+    goStraight((A2_reading + A3_reading) / 2 - 10);
+  }
+
+  md.setBrakes(400, 400);
+
+}
+
+
+void avoidAccident_fast() {
+  double A2_reading = A2sensor_reading();
+  double A3_reading = A3sensor_reading();
+
+  while ( A2_reading > 40 ) {
+    goStraight(30);
+    A2_reading = A2sensor_reading();
+
+  }
+
+  if (A2_reading <= 40) {
+    goStraight(A2_reading - 16);
+  }
+
+  goRight(45);
+  goStraight(40);
+
+  goLeft(90);
+  goStraight(40);
+
+  goRight(50);
+
+  A2_reading = A2sensor_reading();
+  A3_reading = A3sensor_reading();
+
+  Serial.println(A2_reading + A3_reading);
+  while ((A2_reading + A3_reading) > 40) {
+    goStraight(30);
+    A2_reading = A2sensor_reading();
+    A3_reading = A3sensor_reading();
+    delay(50);
+  }
+  if ((A2_reading + A3_reading) <= 40) {
+    goStraight((A2_reading + A3_reading) / 2 - 10);
+  }
+
+  md.setBrakes(400, 400);
+
+}
+
+void front_calibrating() {
+  double A1_reading = A1sensor_reading() + 0.6;
+  double A3_reading = A3sensor_reading();
+
+  double sensor_diff = A1_reading - A3_reading;
+
+
+  while (abs(sensor_diff) >= 0.35) {
+
+    if (sensor_diff > 0) {  //A1 bigger than A3
+      goLeft_1();
+      //setBrakes(400,400);
+      //delay(250);
+    }
+    else if (sensor_diff < 0) {   //A3 bigger than A1
+
+      goRight_1();
+      //setBrakes(400,400);
+      //delay(250);
+    }
+
+    A1_reading = A1sensor_reading() + 0.6;
+    A3_reading = A3sensor_reading();
+
+    sensor_diff = A1_reading - A3_reading;
+  }
+
+}
+
+
+
+void calibrating() {
+  double A0_reading = A0sensor_reading() + 0.4;//-0.6;
+  double A4_reading = A4sensor_reading() + 0.1;//+0.4;
+  /*
+    if (A0_reading < 1) {
+    A0_reading += 7.2;
+    }
+  */
+  //Serial.println(A0_reading);
+  //Serial.println(A4_reading);
+
+  double sensor_diff = A0_reading - A4_reading;
+
+  while (abs(sensor_diff) >= 0.5) {// if A4 is greater than A0
+    //Serial.println(A0_reading);
+    //Serial.println(A4_reading);
+    if (sensor_diff > 0) {
+      goRight_1();
+    }
+    else if (sensor_diff < 0) {  //if A0 is greater then A4
+      goLeft_1();
+    }
+
+
+    A0_reading = A0sensor_reading() + 0.4;//-0.6;
+    A4_reading = A4sensor_reading() + 0.1; //+0.4;
+    /*
+      if (A0_reading < 1) {
+      A0_reading += 7.2;
+      }
+    */
+    sensor_diff = A0_reading - A4_reading;
+  }
+}
+
+void calibration() {
+  
+  double A0_reading = A0sensor_reading() + 0.4;//-0.6;
+  double A4_reading = A4sensor_reading() + 0.1;//+0.4;
+  double right_diff = abs(A0_reading - A4_reading);
+
+  double A1_reading = A1sensor_reading() + 0.6;
+  double A3_reading = A3sensor_reading();
+  double front_diff = abs(A1_reading - A3_reading);
+
+  if (A0_reading < 10 && A4_reading < 10 && right_diff < 3 ) { //Right
+    calibrating();
+  }
+
+  else if (A1_reading < 10 && A3_reading < 10 && front_diff < 3 ) { //Front
+    front_calibrating();
+  }
+
+}
+
+void calibration_test() { //only use calibration in calibration_test.
+  double A0_reading = A0sensor_reading() + 0.4;//-0.6;
+  double A4_reading = A4sensor_reading() + 0.1;//+0.4;
+  double right_diff = abs(A0_reading - A4_reading);
+
+  double A1_reading = A1sensor_reading() + 0.6;
+  double A3_reading = A3sensor_reading();
+  double front_diff = abs(A1_reading - A3_reading);
+
+  if ((A1_reading + A3_reading) /2 < 5) { //Check if both right sensor less than 5cm
+    while ((A1_reading+A3_reading)/2 < 1.05 || (A1_reading + A3_reading)/2 >1.2  ){
+          if((A1_reading+A3_reading)/2 <1.05){
+                goBack_1cm();
+            }
+          else if((A1_reading+A3_reading)/2 >1.20){
+              goStraight_1cm();
+            }
+          A1_reading = A1sensor_reading() + 0.6;
+          A3_reading = A3sensor_reading(); 
+      }
+      calibration();
+  }
+
+  if ((A0_reading+A4_reading)/2 <1.1 || ((A0_reading+A4_reading)/2> 1.4 && (A0_reading+A4_reading)/2 <5) ){
+      goRight_90();
+      A1_reading = A1sensor_reading() + 0.6;
+      A3_reading = A3sensor_reading(); 
+      while ((A1_reading+A3_reading)/2 < 1.05 || (A1_reading + A3_reading)/2 >1.2 ){
+          if((A1_reading+A3_reading)/2 <1.05){
+                goBack_1cm();
+            }
+          else if((A1_reading+A3_reading)/2 >1.2){
+              goStraight_1cm();
+            }
+          A1_reading = A1sensor_reading() + 0.6;
+          A3_reading = A3sensor_reading(); 
+      }
+      calibration();
+      goLeft_90();
+      calibration();
+    }
+
+    else 
+      calibration();
+  
+}
+
+
+int processing(double sensor_data) {
+
+  if (sensor_data < 6.3) {
+    return 0;
+  }
+  else if (sensor_data >= 6.3 && sensor_data < 16) {
+    return 1;
+  }
+  else if (sensor_data >= 16 && sensor_data <24 ) {
+    return 2;
+  }
+  else if (sensor_data >= 24 && sensor_data < 36) {
+      return 3;
+   }
+  else if (sensor_data >= 36) {
+     return 4;
+   }
+
+}
+
+
+
+
+//--------------------------------Motor Calculation-------------------------------
+
+double angle_to_ticks(double given_angle) {
+  double output_ticks = 9.9024 * given_angle - 130.198;
+  return output_ticks;
+
+}
+
+double dist_to_ticks(double given_dist) {
+  double output_ticks = 0.0133* pow(given_dist,2) + 59.425 * given_dist - 42.028;
+  return output_ticks;
+}
+
+double Rrpm_to_speed(int rpm) {
+  //return 3.002*rpm + 21.707;
+  return 0.0001 * pow(rpm, 3) - 0.0312 * pow(rpm, 2) + 4.8363 * rpm + 3.8933;
+}
+
+double Lrpm_to_speed(int rpm) {
+  //return 3.2352*rpm + 20.648;
+  return 0.00007 * pow(rpm, 3) - 0.0191 * pow(rpm, 2) + 4.0512 * rpm + 0.0835;
+}
+
+void reset_Ticks() {
+  avgTicks = 0;
+  m1Ticks = 0;
+  m2Ticks = 0;
+  curError = 0.0;
+  errSum = 0.0;
+  lastErr = 0.0;
+  lastTime = 0.0;
+  Output = 0;
+  Adjust = 0;
+  prev_ms = 0;
+}
